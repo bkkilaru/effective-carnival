@@ -1,0 +1,202 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+datasource db {
+  provider     = "mysql"
+  url          = env("DATABASE_URL")
+  relationMode = "prisma"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Necessary for Next auth
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index(userId)
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index(userId)
+}
+
+model User {
+  id            String         @id @default(cuid())
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @default(now()) @updatedAt
+  name          String?
+  email         String?        @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  hasOnboarded  Boolean        @default(false)
+  teamRoles     UserTeamRole[]
+  anonymousId   String?
+
+  @@unique([anonymousId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Team {
+  id           String         @id @default(cuid())
+  name         String         @default("")
+  slug         String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @default(now()) @updatedAt
+  userRoles    UserTeamRole[]
+  userInvites  UserInvite[]
+  customer     Customer?
+  subscription Subscription?
+
+  @@unique([slug])
+  @@index([slug])
+}
+
+model UserTeamRole {
+  role   String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId String
+  teamId String
+
+  @@id([userId, teamId])
+  @@index([teamId])
+  @@index([userId])
+}
+
+model UserInvite {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  email     String
+  role      String
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  code      String   @unique
+
+  @@unique([teamId, email])
+  @@index([teamId])
+}
+
+// Stripe tables
+// Sourced from https://github.com/vercel/nextjs-subscription-payments/blob/main/schema.sql
+enum PricingType {
+  one_time
+  recurring
+}
+
+enum PricingPlanInterval {
+  day
+  week
+  month
+  year
+}
+
+model Product {
+  id          String   @id // Product ID from Stripe, ex: prod_1234
+  active      Boolean
+  name        String   @db.Text
+  description String?  @db.Text
+  image       String?  @db.Text
+  metadata    Json?
+  prices      Price[]
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  @@index([active])
+}
+
+model Price {
+  // Price ID from Stripe, e.g. price_1234
+  id              String               @id
+  productId       String
+  product         Product?             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  active          Boolean
+  description     String?              @db.Text
+  unitAmount      Int // The unit amount as a positive integer in the smallest currency unit (e.g., 100 cents for US$1.00 or 100 for ¥100, a zero-decimal currency)
+  currency        String // Three-letter ISO currency code, in lowercase
+  type            PricingType
+  // Recurring price info
+  interval        PricingPlanInterval?
+  intervalCount   Int?
+  trialPeriodDays Int?
+  // Set of key-value pairs, used to store additional information about the object in a structured format
+  metadata        Json?
+  subscription    Subscription[]
+  updatedAt       DateTime             @default(now()) @updatedAt
+
+  @@index([productId])
+  @@index([active])
+}
+
+model Customer {
+  id     String @id // Customer ID from Stripe, e.g. cus_1234
+  team   Team   @relation(fields: [teamId], references: [id])
+  teamId String
+
+  @@unique([teamId])
+  @@index([id])
+}
+
+enum SubscriptionStatus {
+  trialing
+  active
+  canceled
+  incomplete
+  incomplete_expired
+  past_due
+  unpaid
+}
+
+model Subscription {
+  id                 String             @id // Subscription ID from Stripe, e.g. sub_1234
+  team               Team               @relation(fields: [teamId], references: [id])
+  teamId             String
+  status             SubscriptionStatus
+  metadata           Json?
+  price              Price              @relation(fields: [priceId], references: [id])
+  priceId            String
+  quantity           Int?
+  cancelAtPeriodEnd  Boolean
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  endedAt            DateTime?
+  cancelAt           DateTime?
+  canceledAt         DateTime?
+  trialStart         DateTime?
+  trialEnd           DateTime?
+  createdAt          DateTime
+  updatedAt          DateTime           @default(now()) @updatedAt
+
+  @@unique([teamId])
+  @@index([teamId])
+  @@index([priceId])
+}
